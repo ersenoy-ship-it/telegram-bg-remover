@@ -1,5 +1,5 @@
 python-telegram-bot
-rembg
+rembg[cpu]
 Pillow
 Flask
 gunicorn
