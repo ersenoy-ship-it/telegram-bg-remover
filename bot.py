@@ -135,7 +135,9 @@ loop = asyncio.new_event_loop()
 asyncio.set_event_loop(loop)
 
 app = Application.builder().token(TOKEN).build()
+
 loop.run_until_complete(app.initialize())
+loop.run_until_complete(app.start())
 
 conv = ConversationHandler(
     entry_points=[MessageHandler(filters.Regex("^(🖼️ Удалить фон|🔄 Заменить фон)$"), button_handler)],
