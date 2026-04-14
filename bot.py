@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 WAITING_FOR_OBJECT = 1
 WAITING_FOR_BACKGROUND = 2
 
-# ⚠️ Ленивая загрузка модели (фикс таймаута)
+# ⚠️ Ленивая загрузка модели
 session = None
 
 # 🧠 Ограничение нагрузки
@@ -43,8 +43,6 @@ def process_remove_bg(image_bytes: bytes) -> bytes:
         session = new_session("u2netp")
 
     input_image = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
-
-    # уменьшаем размер (важно для Render)
     input_image.thumbnail((1024, 1024))
 
     output_image = remove(input_image, session=session)
@@ -134,6 +132,9 @@ async def handle_bg(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================= TELEGRAM =================
 
 app = Application.builder().token(TOKEN).build()
+
+# 🔥 ВАЖНО: инициализация приложения
+asyncio.run(app.initialize())
 
 conv = ConversationHandler(
     entry_points=[MessageHandler(filters.Regex("^(🖼️ Удалить фон|🔄 Заменить фон)$"), button_handler)],
