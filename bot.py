@@ -124,4 +124,4 @@ if __name__ == "__main__":
     port = int(os.environ.get('PORT', 10000))
     print(f"Запускаю Flask на порту {port}...")
     # debug=False обязателен для потоков!
-    app.run(host='0.0.0.0', port=port, debug=False)
+    server.run(host='0.0.0.0', port=port, debug=False)
