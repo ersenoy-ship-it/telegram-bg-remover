@@ -18,10 +18,10 @@ logger = logging.getLogger(__name__)
 WAITING_FOR_OBJECT = 1
 WAITING_FOR_BACKGROUND = 2
 
-# ⚡ ГЛОБАЛЬНАЯ МОДЕЛЬ (ускорение x3–x5)
+# ⚡ Загружаем модель ОДИН раз
 session = new_session("u2netp")
 
-# 🧠 очередь (ограничение нагрузки)
+# 🧠 Ограничение нагрузки
 semaphore = asyncio.Semaphore(2)
 
 main_keyboard = ReplyKeyboardMarkup(
@@ -38,7 +38,7 @@ main_keyboard = ReplyKeyboardMarkup(
 def process_remove_bg(image_bytes: bytes) -> bytes:
     input_image = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
 
-    # 🪶 уменьшаем размер (ускорение + меньше RAM)
+    # уменьшаем размер (важно для Render)
     input_image.thumbnail((1024, 1024))
 
     output_image = remove(input_image, session=session)
@@ -53,13 +53,11 @@ def combine_images(obj_bytes, bg_bytes):
     bg = Image.open(io.BytesIO(bg_bytes)).convert("RGBA")
 
     bg = bg.resize(obj.size, Image.Resampling.LANCZOS)
-
     result = Image.alpha_composite(bg, obj)
 
     out = io.BytesIO()
     result.save(out, format='PNG')
     return out.getvalue()
-
 
 # ================= ХЕНДЛЕРЫ =================
 
@@ -87,13 +85,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_object(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("⏳ Обрабатываю...")
 
-    async with semaphore:  # 🧠 ограничение нагрузки
+    async with semaphore:
         try:
             photo = await update.message.photo[-1].get_file()
             img_bytes = await photo.download_as_bytearray()
 
             res = process_remove_bg(img_bytes)
-
             context.user_data['obj'] = res
 
             if context.user_data.get('mode') == 'remove':
@@ -128,8 +125,7 @@ async def handle_bg(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     return ConversationHandler.END
 
-
-# ================= TELEGRAM APP =================
+# ================= TELEGRAM =================
 
 app = Application.builder().token(TOKEN).build()
 
@@ -148,8 +144,7 @@ conv = ConversationHandler(
 app.add_handler(CommandHandler("start", start))
 app.add_handler(conv)
 
-
-# ================= FLASK (WEBHOOK) =================
+# ================= FLASK =================
 
 server = Flask(__name__)
 
@@ -158,16 +153,23 @@ def health():
     return "OK", 200
 
 
+# 🔥 ВАЖНО: СИНХРОННЫЙ webhook
 @server.route("/webhook", methods=["POST"])
-async def webhook():
-    data = request.get_json()
-    update = Update.de_json(data, app.bot)
-    await app.process_update(update)
-    return "ok"
+def webhook():
+    try:
+        data = request.get_json()
+        update = Update.de_json(data, app.bot)
 
+        asyncio.run(app.process_update(update))
+
+        return "ok"
+    except Exception as e:
+        logger.error(e)
+        return "error", 500
 
 # ================= ЗАПУСК =================
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
+    print("Starting Flask on port", port)
     server.run(host="0.0.0.0", port=port)
