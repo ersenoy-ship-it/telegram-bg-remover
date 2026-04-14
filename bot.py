@@ -112,7 +112,7 @@ def run_bot():
             WAITING_FOR_OBJECT: [MessageHandler(filters.PHOTO, handle_object)],
             WAITING_FOR_BACKGROUND: [MessageHandler(filters.PHOTO, handle_background)],
         },
-        fallbacks=[MessageHandler(filters.Regex("^❌ Отмена$"), cancel)],
+        fallbacks=[MessageHandler(filters.Regex("^❌ Отмена$"), start)],
     )
     
     application.add_handler(CommandHandler("start", start))
