@@ -8,7 +8,7 @@ from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
 
 # Настройки
-TOKEN = os.environ.get("8672875330:AAEonHwFvNFcyHhyjlI5b_Ikq_C_6vBtxFQ")
+TOKEN = os.environ.get("BOT_TOKEN")
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
