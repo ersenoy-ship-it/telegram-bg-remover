@@ -100,15 +100,24 @@ async def ocr_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return WAITING_FOR_OCR
 
 async def ocr_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    status_msg = await update.message.reply_text("🔍 Считываю текст...")
+    status_msg = await update.message.reply_text("🔍 Считываю текст (RU/EN/AR)...")
     try:
         photo_file = await update.message.photo[-1].get_file()
         photo_bytes = await photo_file.download_as_bytearray()
         
         files = {'file': ('img.jpg', io.BytesIO(photo_bytes), 'image/jpeg')}
-        payload = {'apikey': 'K89996852888957', 'language': 'rus', 'OCREngine': 2}
+        
+        # ОБНОВЛЕННЫЙ ПАРАМЕТР ЯЗЫКОВ
+        payload = {
+            'apikey': 'K89996852888957', 
+            'language': 'rus,eng,ara', 
+            'OCREngine': 1,
+            'scale': True
+        }
         
         res = requests.post('https://api.ocr.space/parse/image', files=files, data=payload, timeout=25).json()
+        
+    
         
         if res.get("ParsedResults"):
             text = res["ParsedResults"][0]["ParsedText"]
