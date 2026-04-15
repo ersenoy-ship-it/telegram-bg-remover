@@ -142,18 +142,24 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 application = Application.builder().token(TOKEN).build()
 
-# Функция-посредник для проверки текста (устраняет проблемы с кодировкой эмодзи)
+# Исправленный роутер с возвратом состояний (Return)
 async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
+    if not text: return
     
     if "ℹ️ Инфо" in text:
         await info_handler(update, context)
+        return ConversationHandler.END # Просто показываем инфо и не входим в диалог
+    
     elif "🔳 Создать QR" in text:
-        return await qr_request(update, context)
+        return await qr_request(update, context) # ОБЯЗАТЕЛЬНО return
+        
     elif "🖼 Конвертер" in text:
-        return await img_request(update, context)
+        return await img_request(update, context) # ОБЯЗАТЕЛЬНО return
+        
     elif "📝 Текст с фото" in text:
-        return await ocr_request(update, context)
+        return await ocr_request(update, context) # ОБЯЗАТЕЛЬНО return
+        
     elif "❌ Отмена" in text:
         return await cancel(update, context)
 
@@ -171,15 +177,29 @@ conv_handler = ConversationHandler(
         WAITING_FOR_OCR: [MessageHandler(filters.PHOTO, ocr_process)],
     },
     fallbacks=[
-        MessageHandler(filters.Regex("Отмена"), cancel),
+        MessageHandler(filters.Text(["❌ Отмена", "Отмена"]), cancel),
         CommandHandler("start", start)
     ],
     allow_reentry=True
 )
 
 application.add_handler(conv_handler)
-# Резервный обработчик для Инфо вне диалогов
-application.add_handler(MessageHandler(filters.Regex("Инфо"), info_handler))
+# Резервный обработчик для Инфо (если вдруг роутер пропустит)
+application.add_handler(MessageHandler(filters.Text("ℹ️ Инфо"), info_handler))
 
 # ================= WEB SERVER =================
-# ... дальше твой код с Flask без изменений ...
+server = Flask(__name__)
+
+@server.route("/")
+def health():
+    return "iAssistant Online", 200
+
+def run_bot():
+    logger.info("🤖 iAssistant starting...")
+    # Использование polling с очисткой очереди
+    application.run_polling(drop_pending_updates=True)
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    threading.Thread(target=run_bot, daemon=True).start()
+    server.run(host="0.0.0.0", port=port)
