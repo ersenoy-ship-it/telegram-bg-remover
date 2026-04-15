@@ -3,30 +3,37 @@ import io
 import logging
 import threading
 import qrcode
+import requests
 from flask import Flask
 from PIL import Image
-from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
 
-# Настройки
+# ================= НАСТРОЙКИ =================
 TOKEN = os.getenv("BOT_TOKEN")
-logging.basicConfig(level=logging.INFO)
+# Укажи здесь свою ссылку (например, t.me/твой_ник)
+DEV_URL = "https://t.me/your_username" 
 
-# Состояния диалога
-CHOOSING_TASK = 0
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Состояния диалога для ConversationHandler
 QR_GENERATING = 1
 IMG_CONVERTING = 2
+WAITING_FOR_OCR = 3
 
-# Дизайн кнопок (Apple Style)
+# Дизайн кнопок (Стиль Apple - минимализм и эмодзи)
 def main_menu_keyboard():
     return ReplyKeyboardMarkup([
-        ["🔳 Создать QR", "🖼 Конвертер"],
-        ["📝 Текст с фото", "ℹ️ Инфо"]
+        [KeyboardButton("🔳 Создать QR"), KeyboardButton("🖼 Конвертер")],
+        [KeyboardButton("📝 Текст с фото"), KeyboardButton("ℹ️ Инфо")],
+        [KeyboardButton("❌ Отмена")]
     ], resize_keyboard=True)
 
-# ================= ЛОГИКА ИНСТРУМЕНТОВ =================
+# ================= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =================
 
 def generate_qr(text):
+    """Генерация QR-кода в памяти"""
     qr = qrcode.QRCode(box_size=10, border=2)
     qr.add_data(text)
     qr.make(fit=True)
@@ -36,9 +43,10 @@ def generate_qr(text):
     bio.seek(0)
     return bio
 
-# ================= ХЕНДЛЕРЫ =================
+# ================= ОБРАБОТЧИКИ (ХЕНДЛЕРЫ) =================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /start и приветствие"""
     user = update.effective_user.first_name
     welcome_text = (
         f"Привет, {user}! 👋\n\n"
@@ -48,21 +56,41 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(welcome_text, reply_markup=main_menu_keyboard(), parse_mode="Markdown")
     return ConversationHandler.END
 
+async def info_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Кнопка Инфо с данными о боте"""
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("👨‍💻 Связаться с разработчиком", url=DEV_URL)]
+    ])
+    info_text = (
+        " **iAssistant Support**\n\n"
+        "**Версия:** 2.1 (Stable)\n"
+        "**Статус:** Все системы работают штатно ✅\n\n"
+        "**Инструкция:**\n"
+        "1. Выберите инструмент в меню.\n"
+        "2. Следуйте коротким указаниям.\n"
+        "3. Кнопка «Отмена» прерывает текущую задачу.\n\n"
+        "Бот оптимизирован для работы на Render Free Tier."
+    )
+    await update.message.reply_text(info_text, reply_markup=keyboard, parse_mode="Markdown")
+
+# --- Логика QR-генератора ---
 async def qr_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🔗 Отправьте ссылку или текст для создания QR-кода:")
+    await update.message.reply_text("🔗 Отправьте ссылку или текст для создания QR-кода:", reply_markup=main_menu_keyboard())
     return QR_GENERATING
 
 async def qr_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     qr_img = generate_qr(text)
-    await update.message.reply_photo(photo=qr_img, caption="✨ Ваш QR-код готов")
+    await update.message.reply_photo(photo=qr_img, caption="✨ Ваш QR-код готов", reply_markup=main_menu_keyboard())
     return ConversationHandler.END
 
+# --- Логика Конвертера (PNG) ---
 async def img_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📸 Отправьте изображение (как фото), которое нужно сжать и перевести в PNG:")
+    await update.message.reply_text("📸 Пришлите фото, которое нужно сконвертировать в PNG:")
     return IMG_CONVERTING
 
 async def img_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("⏳ Обработка изображения...")
     photo = await update.message.photo[-1].get_file()
     img_bytes = await photo.download_as_bytearray()
     
@@ -71,45 +99,90 @@ async def img_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
     img.save(out, format="PNG", optimize=True)
     out.seek(0)
     
-    await update.message.reply_document(document=out, filename="converted.png", caption="✅ Оптимизировано")
+    await update.message.reply_document(document=out, filename="result.png", caption="✅ Сжато и конвертировано", reply_markup=main_menu_keyboard())
+    return ConversationHandler.END
+
+# --- Логика OCR (Текст с фото) ---
+async def ocr_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("📝 Пришлите четкое фото с текстом для распознавания:")
+    return WAITING_FOR_OCR
+
+async def ocr_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    status_msg = await update.message.reply_text("🔍 Анализирую текст...")
+    try:
+        photo = await update.message.photo[-1].get_file()
+        img_url = photo.file_path
+        # Используем внешний API, чтобы не нагружать RAM сервера
+        api_url = f"https://api.ocr.space/parse/imageurl?apikey=helloworld&url={img_url}&language=rus"
+        
+        response = requests.get(api_url).json()
+        
+        if response.get("ParsedResults"):
+            text = response["ParsedResults"][0]["ParsedText"]
+            if text.strip():
+                await update.message.reply_text(f"📖 **Распознанный текст:**\n\n`{text}`", 
+                                               parse_mode="Markdown", reply_markup=main_menu_keyboard())
+            else:
+                await update.message.reply_text("Текст на фото не найден.", reply_markup=main_menu_keyboard())
+        else:
+            await update.message.reply_text("Ошибка сервиса OCR. Попробуйте позже.", reply_markup=main_menu_keyboard())
+            
+    except Exception as e:
+        logger.error(f"OCR Error: {e}")
+        await update.message.reply_text("Не удалось распознать текст.")
+    
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Отменено.", reply_markup=main_menu_keyboard())
+    """Отмена текущего действия"""
+    await update.message.reply_text("Действие отменено.", reply_markup=main_menu_keyboard())
     return ConversationHandler.END
 
-# ================= ИНИЦИАЛИЗАЦИЯ =================
+# ================= ИНИЦИАЛИЗАЦИЯ И ЗАПУСК =================
 
-app = Application.builder().token(TOKEN).build()
+# Создаем приложение
+application = Application.builder().token(TOKEN).build()
 
+# 1. Сначала регистрируем обычные команды
+application.add_handler(CommandHandler("start", start))
+application.add_handler(MessageHandler(filters.Regex("ℹ️ Инфо"), info_handler))
+
+# 2. Регистрируем диалоговый обработчик
 conv_handler = ConversationHandler(
     entry_points=[
         MessageHandler(filters.Regex("🔳 Создать QR"), qr_request),
         MessageHandler(filters.Regex("🖼 Конвертер"), img_request),
+        MessageHandler(filters.Regex("📝 Текст с фото"), ocr_request),
     ],
     states={
         QR_GENERATING: [MessageHandler(filters.TEXT & ~filters.COMMAND, qr_process)],
         IMG_CONVERTING: [MessageHandler(filters.PHOTO, img_process)],
+        WAITING_FOR_OCR: [MessageHandler(filters.PHOTO, ocr_process)],
     },
-    fallbacks=[MessageHandler(filters.Regex("Отмена"), cancel)],
+    fallbacks=[
+        MessageHandler(filters.Regex("❌ Отмена"), cancel),
+        CommandHandler("start", start)
+    ],
 )
 
-app.add_handler(CommandHandler("start", start))
-app.add_handler(conv_handler)
+application.add_handler(conv_handler)
 
-# ================= WEB SERVER =================
-
+# --- Настройка Flask (для Render) ---
 server = Flask(__name__)
 
 @server.route("/")
-def health():
+def health_check():
     return "iAssistant is Online", 200
 
 def run_bot():
-    print("🤖 iAssistant starting...")
-    app.run_polling(stop_signals=None, drop_pending_updates=True)
+    print("🤖 Бот запускается...")
+    # drop_pending_updates=True сбрасывает старые сообщения
+    application.run_polling(stop_signals=None, drop_pending_updates=True)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
+    # Запускаем бота в отдельном потоке
     threading.Thread(target=run_bot, daemon=True).start()
+    # Запускаем веб-сервер
+    print(f"🚀 Веб-сервер на порту {port}")
     server.run(host="0.0.0.0", port=port)
