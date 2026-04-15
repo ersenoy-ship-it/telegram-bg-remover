@@ -162,9 +162,14 @@ def health():
 # ================= ЗАПУСК =================
 
 def run_bot():
-    """Запуск бота в режиме Polling"""
-    print("🤖 Telegram Bot запущен...")
-    application.run_polling()
+    """Запуск бота в режиме Polling без обработки сигналов"""
+    print("🤖 Telegram Bot запущен (режим Polling)...")
+    try:
+        # stop_signals=None — лечит RuntimeError
+        # drop_pending_updates=True — очищает старые зависшие сообщения и сбрасывает вебхук
+        application.run_polling(stop_signals=None, drop_pending_updates=True)
+    except Exception as e:
+        logger.error(f"Ошибка в работе бота: {e}")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
@@ -173,6 +178,7 @@ if __name__ == "__main__":
     bot_thread = threading.Thread(target=run_bot, daemon=True)
     bot_thread.start()
 
-    # Запускаем Flask сервер в основном потоке (необходимо для Render)
+    # Запускаем Flask сервер в основном потоке
     print(f"🚀 Web-сервер запущен на порту {port}")
-    server.run(host="0.0.0.0", port=port)
+    # debug=False обязателен для работы в потоках
+    server.run(host="0.0.0.0", port=port, debug=False)
