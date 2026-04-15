@@ -107,13 +107,19 @@ async def ocr_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         files = {'file': ('img.jpg', io.BytesIO(photo_bytes), 'image/jpeg')}
         
-        # ОБНОВЛЕННЫЙ ПАРАМЕТР ЯЗЫКОВ
+        # ОБНОВЛЕННЫЙ ПАРАМЕТР (Максимально стабильный)
         payload = {
             'apikey': 'K89996852888957', 
-            'language': 'rus,eng,ara', 
-            'OCREngine': 1,
-            'scale': True
+            'language': 'rus',  # Начнем с русского как основного
+            'isOverlayRequired': False,
+            'base64Image': '',
+            'OCREngine': 1,     # Engine 1 лучше для арабского и смешанных текстов
+            'scale': True       # Улучшает распознавание мелкого текста
         }
+        
+        # Хитрость: если мы хотим арабский + русский, 
+        # API лучше всего понимает их, если указать их так:
+        payload['language'] = 'rus,ara,eng'
         
         res = requests.post('https://api.ocr.space/parse/image', files=files, data=payload, timeout=25).json()
         
