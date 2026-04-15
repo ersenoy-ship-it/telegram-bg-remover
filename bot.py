@@ -1,184 +1,115 @@
 import os
 import io
 import logging
-import asyncio
 import threading
+import qrcode
 from flask import Flask
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
+from PIL import Image
+from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
 
-from rembg import remove, new_session
-from PIL import Image
-
-# ================= НАСТРОЙКИ =================
+# Настройки
 TOKEN = os.getenv("BOT_TOKEN")
-
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
-WAITING_FOR_OBJECT = 1
-WAITING_FOR_BACKGROUND = 2
+# Состояния диалога
+CHOOSING_TASK = 0
+QR_GENERATING = 1
+IMG_CONVERTING = 2
 
-# Ленивая загрузка модели
-session = None
+# Дизайн кнопок (Apple Style)
+def main_menu_keyboard():
+    return ReplyKeyboardMarkup([
+        ["🔳 Создать QR", "🖼 Конвертер"],
+        ["📝 Текст с фото", "ℹ️ Инфо"]
+    ], resize_keyboard=True)
 
-# Ограничение нагрузки (чтобы Render не убил процесс за RAM)
-semaphore = asyncio.Semaphore(2)
+# ================= ЛОГИКА ИНСТРУМЕНТОВ =================
 
-main_keyboard = ReplyKeyboardMarkup(
-    [
-        [KeyboardButton("🖼️ Удалить фон")],
-        [KeyboardButton("🔄 Заменить фон")],
-        [KeyboardButton("❌ Отмена")]
-    ],
-    resize_keyboard=True
-)
-
-# ================= ОБРАБОТКА =================
-
-def process_remove_bg(image_bytes: bytes) -> bytes:
-    global session
-    if session is None:
-        print("🔄 Loading model...")
-        session = new_session("u2netp")
-
-    input_image = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
-    input_image.thumbnail((512, 512)) 
-
-    output_image = remove(input_image, session=session)
-
-    output_bytes = io.BytesIO()
-    output_image.save(output_bytes, format='PNG')
-    return output_bytes.getvalue()
-
-
-def combine_images(obj_bytes, bg_bytes):
-    obj = Image.open(io.BytesIO(obj_bytes)).convert("RGBA")
-    bg = Image.open(io.BytesIO(bg_bytes)).convert("RGBA")
-
-    bg = bg.resize(obj.size, Image.Resampling.LANCZOS)
-    result = Image.alpha_composite(bg, obj)
-
-    out = io.BytesIO()
-    result.save(out, format='PNG')
-    return out.getvalue()
+def generate_qr(text):
+    qr = qrcode.QRCode(box_size=10, border=2)
+    qr.add_data(text)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="#000000", back_color="#ffffff")
+    bio = io.BytesIO()
+    img.save(bio, format="PNG")
+    bio.seek(0)
+    return bio
 
 # ================= ХЕНДЛЕРЫ =================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 Бот готов! Выберите действие:", reply_markup=main_keyboard)
+    user = update.effective_user.first_name
+    welcome_text = (
+        f"Привет, {user}! 👋\n\n"
+        "Я — **iAssistant**. Твой минималистичный помощник для быстрых задач.\n"
+        "Выберите действие в меню ниже:"
+    )
+    await update.message.reply_text(welcome_text, reply_markup=main_menu_keyboard(), parse_mode="Markdown")
     return ConversationHandler.END
 
+async def qr_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🔗 Отправьте ссылку или текст для создания QR-кода:")
+    return QR_GENERATING
 
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def qr_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
-
-    if "Удалить" in text:
-        context.user_data['mode'] = 'remove'
-        await update.message.reply_text("📸 Пришлите фото.")
-        return WAITING_FOR_OBJECT
-
-    elif "Заменить" in text:
-        context.user_data['mode'] = 'replace'
-        await update.message.reply_text("📸 Шаг 1: пришлите ОБЪЕКТ.")
-        return WAITING_FOR_OBJECT
-
+    qr_img = generate_qr(text)
+    await update.message.reply_photo(photo=qr_img, caption="✨ Ваш QR-код готов")
     return ConversationHandler.END
 
+async def img_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("📸 Отправьте изображение (как фото), которое нужно сжать и перевести в PNG:")
+    return IMG_CONVERTING
 
-async def handle_object(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("⏳ Обрабатываю...")
-
-    async with semaphore:
-        try:
-            photo = await update.message.photo[-1].get_file()
-            img_bytes = await photo.download_as_bytearray()
-
-            res = process_remove_bg(img_bytes)
-            context.user_data['obj'] = res
-
-            if context.user_data.get('mode') == 'remove':
-                await update.message.reply_document(
-                    document=io.BytesIO(res),
-                    filename="result.png"
-                )
-                return ConversationHandler.END
-
-            await update.message.reply_text("✅ Теперь пришлите ФОН.")
-            return WAITING_FOR_BACKGROUND
-
-        except Exception as e:
-            logger.error(e)
-            await update.message.reply_text("Ошибка 😢")
-            return ConversationHandler.END
-
-
-async def handle_bg(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    async with semaphore:
-        try:
-            photo = await update.message.photo[-1].get_file()
-            bg_bytes = await photo.download_as_bytearray()
-
-            final = combine_images(context.user_data['obj'], bg_bytes)
-
-            await update.message.reply_photo(photo=io.BytesIO(final))
-
-        except Exception as e:
-            logger.error(e)
-            await update.message.reply_text("Ошибка 😢")
-
+async def img_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    photo = await update.message.photo[-1].get_file()
+    img_bytes = await photo.download_as_bytearray()
+    
+    img = Image.open(io.BytesIO(img_bytes))
+    out = io.BytesIO()
+    img.save(out, format="PNG", optimize=True)
+    out.seek(0)
+    
+    await update.message.reply_document(document=out, filename="converted.png", caption="✅ Оптимизировано")
     return ConversationHandler.END
 
-# ================= ИНИЦИАЛИЗАЦИЯ БОТА =================
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Отменено.", reply_markup=main_menu_keyboard())
+    return ConversationHandler.END
 
-# Создаем приложение
-application = Application.builder().token(TOKEN).build()
+# ================= ИНИЦИАЛИЗАЦИЯ =================
 
-# Настраиваем диалоги
-conv = ConversationHandler(
-    entry_points=[MessageHandler(filters.Regex("^(🖼️ Удалить фон|🔄 Заменить фон)$"), button_handler)],
-    states={
-        WAITING_FOR_OBJECT: [MessageHandler(filters.PHOTO, handle_object)],
-        WAITING_FOR_BACKGROUND: [MessageHandler(filters.PHOTO, handle_bg)],
-    },
-    fallbacks=[
-        CommandHandler("start", start),
-        MessageHandler(filters.Regex("Отмена"), start)
+app = Application.builder().token(TOKEN).build()
+
+conv_handler = ConversationHandler(
+    entry_points=[
+        MessageHandler(filters.Regex("🔳 Создать QR"), qr_request),
+        MessageHandler(filters.Regex("🖼 Конвертер"), img_request),
     ],
+    states={
+        QR_GENERATING: [MessageHandler(filters.TEXT & ~filters.COMMAND, qr_process)],
+        IMG_CONVERTING: [MessageHandler(filters.PHOTO, img_process)],
+    },
+    fallbacks=[MessageHandler(filters.Regex("Отмена"), cancel)],
 )
 
-# Регистрируем хендлеры
-application.add_handler(CommandHandler("start", start))
-application.add_handler(conv)
+app.add_handler(CommandHandler("start", start))
+app.add_handler(conv_handler)
 
-# ================= FLASK (Для Render) =================
+# ================= WEB SERVER =================
 
 server = Flask(__name__)
 
 @server.route("/")
 def health():
-    return "Бот запущен и работает!", 200
-
-# ================= ЗАПУСК =================
+    return "iAssistant is Online", 200
 
 def run_bot():
-    """Запуск бота в режиме Polling без обработки сигналов"""
-    print("🤖 Telegram Bot запущен (режим Polling)...")
-    try:
-        # stop_signals=None — лечит RuntimeError
-        # drop_pending_updates=True — очищает старые зависшие сообщения и сбрасывает вебхук
-        application.run_polling(stop_signals=None, drop_pending_updates=True)
-    except Exception as e:
-        logger.error(f"Ошибка в работе бота: {e}")
+    print("🤖 iAssistant starting...")
+    app.run_polling(stop_signals=None, drop_pending_updates=True)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
-
-    # Запускаем бота в фоновом потоке
-    bot_thread = threading.Thread(target=run_bot, daemon=True)
-    bot_thread.start()
-
-    # Запускаем Flask сервер в основном потоке
-    print(f"🚀 Web-сервер запущен на порту {port}")
-    # debug=False обязателен для работы в потоках
-    server.run(host="0.0.0.0", port=port, debug=False)
+    threading.Thread(target=run_bot, daemon=True).start()
+    server.run(host="0.0.0.0", port=port)
