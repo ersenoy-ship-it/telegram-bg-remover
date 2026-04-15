@@ -57,14 +57,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 async def info_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Кнопка Инфо с данными о боте"""
+    # Кавычки должны быть и в начале, и в конце ссылки!
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("👨‍💻 Связаться с разработчиком", url=https://t.me/ZYB_19")]
+        [InlineKeyboardButton("👨‍💻 Связаться с разработчиком", url="https://t.me/ZYB_19")]
     ])
     info_text = (
         " **iAssistant Support**\n\n"
         "**Версия:** 2.1 (Stable)\n"
-        "**Статус:** Все системы работают штатно ✅\n\n"
+        "**Статус:** Все системы работают ✅\n\n"
         "**Инструкция:**\n"
         "1. Выберите инструмент в меню.\n"
         "2. Следуйте коротким указаниям.\n"
