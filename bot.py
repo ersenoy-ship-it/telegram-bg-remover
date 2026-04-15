@@ -129,7 +129,19 @@ async def ocr_process_standard(update: Update, context: ContextTypes.DEFAULT_TYP
 async def ocr_process_arabic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await ocr_process_logic(update, {'language': 'ara', 'OCREngine': 1})
     return ConversationHandler.END
-
+    
+async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🤖 **Я — твой универсальный помощник!**\n\n"
+        "🏁 **QR**: отправь ссылку, и я сделаю код.\n"
+        "🖼 **Конвертер**: переделываю фото в формат PNG.\n"
+        "📝 **Текст (RU/EN)**: распознаю кириллицу и латиницу.\n"
+        "☪️ **Текст (Arabic)**: читаю арабскую вязь.\n\n"
+        "Если я перестал отвечать, просто нажми кнопку '❌ Отмена'.",
+        parse_mode="Markdown",
+        reply_markup=main_menu_keyboard()
+    )
+    return ConversationHandler.END # Это важно, чтобы сбросить ожидания бота
 # --- ЗАПУСК ---
 if __name__ == "__main__":
     # Запуск Flask в фоне
@@ -145,6 +157,7 @@ if __name__ == "__main__":
             MessageHandler(filters.Text("🖼 Конвертер"), img_request),
             MessageHandler(filters.Text("📝 Текст (RU/EN)"), ocr_standard_request),
             MessageHandler(filters.Text("☪️ Текст (Arabic)"), ocr_arabic_request),
+            MessageHandler(filters.Text("ℹ️ Инфо"), info_command),
         ],
         states={
             QR_GENERATING: [MessageHandler(filters.TEXT & ~filters.COMMAND, qr_process)],
