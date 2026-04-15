@@ -2,7 +2,8 @@ import os
 import io
 import logging
 import asyncio
-from flask import Flask, request
+import threading
+from flask import Flask
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
 
@@ -18,10 +19,10 @@ logger = logging.getLogger(__name__)
 WAITING_FOR_OBJECT = 1
 WAITING_FOR_BACKGROUND = 2
 
-# ⚠️ Ленивая загрузка модели
+# Ленивая загрузка модели
 session = None
 
-# 🧠 Ограничение нагрузки
+# Ограничение нагрузки (чтобы Render не убил процесс за RAM)
 semaphore = asyncio.Semaphore(2)
 
 main_keyboard = ReplyKeyboardMarkup(
@@ -37,13 +38,12 @@ main_keyboard = ReplyKeyboardMarkup(
 
 def process_remove_bg(image_bytes: bytes) -> bytes:
     global session
-
     if session is None:
         print("🔄 Loading model...")
         session = new_session("u2netp")
 
     input_image = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
-    input_image.thumbnail((512, 512)) # Уменьшите размер до 512, это сэкономит много RAM
+    input_image.thumbnail((512, 512)) 
 
     output_image = remove(input_image, session=session)
 
@@ -129,17 +129,12 @@ async def handle_bg(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     return ConversationHandler.END
 
-# ================= TELEGRAM =================
+# ================= ИНИЦИАЛИЗАЦИЯ БОТА =================
 
-def run_telegram():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+# Создаем приложение
+application = Application.builder().token(TOKEN).build()
 
-    loop.run_until_complete(app.initialize())
-    loop.run_until_complete(app.start())
-
-    loop.run_forever()
-
+# Настраиваем диалоги
 conv = ConversationHandler(
     entry_points=[MessageHandler(filters.Regex("^(🖼️ Удалить фон|🔄 Заменить фон)$"), button_handler)],
     states={
@@ -152,52 +147,32 @@ conv = ConversationHandler(
     ],
 )
 
-app.add_handler(CommandHandler("start", start))
-app.add_handler(conv)
+# Регистрируем хендлеры
+application.add_handler(CommandHandler("start", start))
+application.add_handler(conv)
 
-# ================= FLASK =================
+# ================= FLASK (Для Render) =================
 
 server = Flask(__name__)
 
 @server.route("/")
 def health():
-    return "OK", 200
-
-
-@server.route("/webhook", methods=["POST"])
-def webhook():
-    try:
-        data = request.get_json()
-        update = Update.de_json(data, app.bot)
-
-        loop.create_task(app.process_update(update))
-
-        return "ok"
-    except Exception as e:
-        logger.error(e)
-        return "error", 500
+    return "Бот запущен и работает!", 200
 
 # ================= ЗАПУСК =================
 
-import threading
-
-# ... ваш остальной код (хендлеры, функции) ...
+def run_bot():
+    """Запуск бота в режиме Polling"""
+    print("🤖 Telegram Bot запущен...")
+    application.run_polling()
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
 
-    # 1. Сначала подготавливаем Telegram бота, но НЕ запускаем run_polling() сразу
-    # Мы используем неблокирующий метод.
-    
-    def run_bot():
-        # Важно: run_polling блокирует поток, поэтому он должен быть в отдельном потоке
-        print("🤖 Бот запускается в фоне...")
-        app.run_polling(close_loop=False)
+    # Запускаем бота в фоновом потоке
+    bot_thread = threading.Thread(target=run_bot, daemon=True)
+    bot_thread.start()
 
-    # Запускаем бота в отдельном потоке
-    threading.Thread(target=run_bot, daemon=True).start()
-
-    # 2. Flask ДОЛЖЕН работать в основном потоке на порту, который требует Render
-    print(f"🚀 Flask слушает порт {port}")
-    # Это "разморозит" деплой Render
+    # Запускаем Flask сервер в основном потоке (необходимо для Render)
+    print(f"🚀 Web-сервер запущен на порту {port}")
     server.run(host="0.0.0.0", port=port)
