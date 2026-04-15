@@ -8,23 +8,23 @@ from flask import Flask
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
 
-# --- НАСТРОЙКИ ---
-TOKEN = "8661460383:AAELNnjY9BEGvX_87ldmUHAi6ZiwnXPsQGs"
-OCR_API_KEY = "K89996852888957" # Твой ключ
+# --- КОНФИГУРАЦИЯ ---
+TOKEN = "ТВОЙ_ТЕЛЕГРАМ_ТОКЕН" # Вставь свой токен!
+OCR_API_KEY = "K89996852888957"
 
-# Состояния диалога
+# Состояния (States)
 QR_GENERATING, IMG_CONVERTING, WAITING_FOR_OCR, WAITING_FOR_OCR_ARABIC = range(1, 5)
 
 # Логирование
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- FLASK (для Render) ---
+# --- FLASK ДЛЯ RENDER ---
 app_flask = Flask(__name__)
 
 @app_flask.route('/')
 def home():
-    return "Бот работает!"
+    return "Статус: Бот активен 🚀"
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
@@ -38,10 +38,10 @@ def main_menu_keyboard():
         [KeyboardButton("ℹ️ Инфо"), KeyboardButton("❌ Отмена")]
     ], resize_keyboard=True)
 
-# --- КОМАНДЫ ---
+# --- БАЗОВЫЕ КОМАНДЫ ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Привет! Я твой многофункциональный помощник.\nВыберите действие на клавиатуре:",
+        "Бот готов к работе! Выберите нужную функцию:",
         reply_markup=main_menu_keyboard()
     )
 
@@ -49,20 +49,20 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Действие отменено.", reply_markup=main_menu_keyboard())
     return ConversationHandler.END
 
-# --- ЛОГИКА QR ---
+# --- ЛОГИКА QR (🏁) ---
 async def qr_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Отправьте текст или ссылку для создания QR-кода:")
+    await update.message.reply_text("Отправьте текст или ссылку для генерации QR-кода:")
     return QR_GENERATING
 
 async def qr_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&data={text}"
-    await update.message.reply_photo(qr_url, caption=f"Ваш QR-код для: {text}")
+    await update.message.reply_photo(qr_url, caption=f"Ваш QR-код готов ✅\nДанные: {text}")
     return ConversationHandler.END
 
-# --- ЛОГИКА КОНВЕРТЕРА ---
+# --- ЛОГИКА КОНВЕРТЕРА (🖼) ---
 async def img_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Пришлите фото, которое нужно конвертировать в PNG:")
+    await update.message.reply_text("Пришлите фото для конвертации в PNG:")
     return IMG_CONVERTING
 
 async def img_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -74,28 +74,20 @@ async def img_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
     img.save(out_io, format="PNG")
     out_io.seek(0)
     
-    await update.message.reply_document(document=out_io, filename="converted.png")
+    await update.message.reply_document(document=out_io, filename="converted_image.png")
     return ConversationHandler.END
 
-# --- ЛОГИКА OCR (ОБЩАЯ) ---
-async def ocr_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📝 Пришлите фото для распознавания (RU/EN):")
-    return WAITING_FOR_OCR
-
-async def ocr_arabic_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("☪️ Пришлите фото с Арабским текстом:")
-    return WAITING_FOR_OCR_ARABIC
-
+# --- ЛОГИКА OCR (ОБЩЕЕ ЯДРО) ---
 async def ocr_process_logic(update: Update, lang_settings):
-    status_msg = await update.message.reply_text("🔍 Анализирую...")
+    status_msg = await update.message.reply_text("🔍 Обрабатываю изображение...")
     try:
         photo_file = await update.message.photo[-1].get_file()
         img_bytes = await photo_file.download_as_bytearray()
         
-        # Сжатие для стабильности
+        # Сжатие фото (чтобы API не «вылетало» по таймауту или размеру)
         img = Image.open(io.BytesIO(img_bytes)).convert('RGB')
         compressed_bio = io.BytesIO()
-        img.save(compressed_bio, format="JPEG", quality=80)
+        img.save(compressed_bio, format="JPEG", quality=85)
         compressed_bio.seek(0)
 
         payload = {
@@ -111,15 +103,24 @@ async def ocr_process_logic(update: Update, lang_settings):
         if res.get("OCRExitCode") == 1:
             text = res["ParsedResults"][0].get("ParsedText", "").strip()
             if text:
-                await status_msg.edit_text(f"📖 **Результат:**\n\n`{text}`", parse_mode="Markdown")
+                await status_msg.edit_text(f"📖 **Распознанный текст:**\n\n`{text}`", parse_mode="Markdown")
             else:
-                await status_msg.edit_text("❌ Текст не найден.")
+                await status_msg.edit_text("❌ Текст на изображении не найден.")
         else:
-            err = res.get("ErrorMessage", ["Ошибка API"])[0]
-            await status_msg.edit_text(f"❌ Ошибка: {err}")
+            err = res.get("ErrorMessage", ["Неизвестная ошибка API"])[0]
+            await status_msg.edit_text(f"❌ Ошибка API: {err}")
     except Exception as e:
-        logger.error(f"OCR Error: {e}")
-        await status_msg.edit_text("❌ Ошибка связи с сервером.")
+        logger.error(f"OCR Critical Error: {e}")
+        await status_msg.edit_text("❌ Ошибка связи с сервером. Попробуйте позже.")
+
+# Хендлеры для разных языков
+async def ocr_standard_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("📝 Пришлите фото для распознавания (RU/EN):")
+    return WAITING_FOR_OCR
+
+async def ocr_arabic_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("☪️ Пришлите фото с арабским текстом:")
+    return WAITING_FOR_OCR_ARABIC
 
 async def ocr_process_standard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await ocr_process_logic(update, {'language': 'rus,eng', 'OCREngine': 2})
@@ -131,17 +132,18 @@ async def ocr_process_arabic(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 # --- ЗАПУСК ---
 if __name__ == "__main__":
-    # Запуск Flask в отдельном потоке
+    # Запуск Flask в фоне
     threading.Thread(target=run_flask, daemon=True).start()
     
-    # Запуск Бота
+    # Сборка бота
     application = Application.builder().token(TOKEN).build()
     
+    # Настройка диалогов
     conv_handler = ConversationHandler(
         entry_points=[
             MessageHandler(filters.Text("🏁 Создать QR"), qr_request),
             MessageHandler(filters.Text("🖼 Конвертер"), img_request),
-            MessageHandler(filters.Text("📝 Текст (RU/EN)"), ocr_request),
+            MessageHandler(filters.Text("📝 Текст (RU/EN)"), ocr_standard_request),
             MessageHandler(filters.Text("☪️ Текст (Arabic)"), ocr_arabic_request),
         ],
         states={
@@ -156,5 +158,5 @@ if __name__ == "__main__":
     application.add_handler(CommandHandler("start", start))
     application.add_handler(conv_handler)
     
-    print("--- БОТ ЗАПУЩЕН ---")
+    print("--- БОТ ЗАПУЩЕН И ГОТОВ К ТЕСТАМ ---")
     application.run_polling(drop_pending_updates=True)
