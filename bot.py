@@ -9,7 +9,7 @@ from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
 
 # --- КОНФИГУРАЦИЯ ---
-TOKEN = "8661460383:AAELNnjY9BEGvX_87ldmUHAi6ZiwnXPsQGs" # Вставь свой токен!
+TOKEN = os.environ.get("BOT_TOKEN")
 OCR_API_KEY = "K89996852888957"
 
 # Состояния (States)
@@ -123,7 +123,7 @@ async def ocr_arabic_request(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return WAITING_FOR_OCR_ARABIC
 
 async def ocr_process_standard(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await ocr_process_logic(update, {'language': 'rus,eng', 'OCREngine': 2})
+    await ocr_process_logic(update, {'language': 'rus', 'OCREngine': 2})
     return ConversationHandler.END
 
 async def ocr_process_arabic(update: Update, context: ContextTypes.DEFAULT_TYPE):
